@@ -1,0 +1,111 @@
+# OWASP-style security rules for ReviewBot AI
+# Runs before LLM — fast, deterministic, zero API cost
+
+rules:
+  - id: sql_injection_python
+    name: SQL Injection (Python)
+    severity: critical
+    category: security
+    languages: [python]
+    pattern: "(?i)(execute|query|raw)\\s*\\(\\s*([f\"'].*SELECT|.*\\+.*[\"'])"
+    message: User input may be concatenated into SQL query
+    suggestion: Use parameterized queries with placeholders
+
+  - id: sql_injection_js
+    name: SQL Injection (JavaScript)
+    severity: critical
+    category: security
+    languages: [javascript, typescript]
+    pattern: "(?i)(query|execute)\\s*\\(\\s*[`\"'].*\\$\\{"
+    message: Template literal or concatenation in SQL query
+    suggestion: Use parameterized queries or an ORM
+
+  - id: xss_innerhtml
+    name: XSS via innerHTML
+    severity: high
+    category: security
+    languages: [javascript, typescript]
+    pattern: "innerHTML\\s*="
+    message: Assigning unsanitized HTML can lead to XSS
+    suggestion: Use textContent or a sanitization library (DOMPurify)
+
+  - id: xss_document_write
+    name: XSS via document.write
+    severity: high
+    category: security
+    languages: [javascript, typescript]
+    pattern: "document\\.write\\s*\\("
+    message: document.write with dynamic content is XSS-prone
+    suggestion: Use DOM APIs with sanitized content
+
+  - id: hardcoded_secret
+    name: Hardcoded Secret
+    severity: critical
+    category: security
+    languages: [python, javascript, typescript, java, go, ruby, php, csharp]
+    pattern: "(?i)(password|secret|api_key|apikey|token|private_key)\\s*=\\s*[\"'][^\"']{8,}[\"']"
+    message: Possible hardcoded credential detected
+    suggestion: Load secrets from environment variables or a secret manager
+
+  - id: path_traversal_python
+    name: Path Traversal (Python)
+    severity: high
+    category: security
+    languages: [python]
+    pattern: "open\\s*\\(\\s*.*\\+"
+    message: File path built via string concatenation
+    suggestion: Validate and normalize paths; reject .. segments
+
+  - id: command_injection_python
+    name: Command Injection (Python)
+    severity: critical
+    category: security
+    languages: [python]
+    pattern: "(os\\.system\\s*\\(|subprocess\\.(call|run|Popen).*shell\\s*=\\s*True)"
+    message: Shell command execution with user-controlled input risk
+    suggestion: Use subprocess with shell=False and argument lists
+
+  - id: command_injection_js
+    name: Command Injection (JavaScript)
+    severity: critical
+    category: security
+    languages: [javascript, typescript]
+    pattern: "(child_process\\.(exec|execSync)\\s*\\(|exec\\s*\\(\\s*`)"
+    message: Shell execution with interpolated input
+    suggestion: Use execFile with explicit arguments
+
+  - id: insecure_deserialization_python
+    name: Insecure Deserialization (Python)
+    severity: critical
+    category: security
+    languages: [python]
+    pattern: "pickle\\.loads?\\s*\\("
+    message: pickle can execute arbitrary code on untrusted data
+    suggestion: Use JSON or other safe serialization formats
+
+  - id: weak_crypto_md5
+    name: Weak Cryptography (MD5/SHA1)
+    severity: medium
+    category: security
+    languages: [python, javascript, typescript, java, go]
+    pattern: "(?i)(md5|sha1)\\s*\\("
+    message: Weak hash algorithm for security-sensitive use
+    suggestion: Use SHA-256 or bcrypt/argon2 for passwords
+
+  - id: eval_usage
+    name: Dangerous eval()
+    severity: critical
+    category: security
+    languages: [python, javascript, typescript]
+    pattern: "\\beval\\s*\\("
+    message: eval() executes arbitrary code
+    suggestion: Avoid eval; use safe parsing alternatives
+
+  - id: jwt_none_algorithm
+    name: JWT None Algorithm
+    severity: critical
+    category: security
+    languages: [python, javascript, typescript, java]
+    pattern: "(?i)algorithm\\s*[=:]\\s*[\"']none[\"']"
+    message: JWT with none algorithm bypasses signature verification
+    suggestion: Explicitly allow only secure algorithms (RS256, ES256)
