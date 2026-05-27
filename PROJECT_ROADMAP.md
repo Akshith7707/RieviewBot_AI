@@ -20,8 +20,8 @@ Your single file to understand **what exists**, **what to do next**, and **how t
 | SQLite job + issue storage | Done |
 | Manual review API (`POST /api/review`) | Done |
 | `.env.example` with setup hints | Done |
-| RL feedback loop | Not started |
-| React dashboard | Not started |
+| RL feedback loop (`POST /api/feedback`, feedback log) | Done |
+| React dashboard (Vite + live stats) | Done |
 | Redis job queue | Not started |
 | ChromaDB review memory | Not started |
 | Custom rule DSL editor | Not started |

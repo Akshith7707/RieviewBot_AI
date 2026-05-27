@@ -7,8 +7,9 @@ from pathlib import Path
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
-# Ensure project root is on path when running as script
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -16,12 +17,16 @@ if str(ROOT) not in sys.path:
 from backend.config import get_settings
 from backend.db.store import ReviewStore
 from backend.models import (
+    DashboardStats,
+    FeedbackCreate,
+    FeedbackRecord,
     HealthResponse,
     JobDetailResponse,
     ManualReviewRequest,
     WebhookResponse,
 )
 from backend.review_engine.review_orchestrator import ReviewOrchestrator
+from backend.rl.feedback_collector import FeedbackCollector
 from backend.webhook_handler import WebhookHandler, _enqueue_review
 
 logging.basicConfig(
@@ -33,6 +38,9 @@ logger = logging.getLogger(__name__)
 store = ReviewStore()
 orchestrator = ReviewOrchestrator(store)
 webhook_handler = WebhookHandler()
+feedback_collector = FeedbackCollector(store)
+
+FRONTEND_DIST = ROOT / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -47,8 +55,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="ReviewBot AI",
-    description="Self-hosted AI code reviewer — GitHub & GitLab MVP",
-    version="0.1.0-mvp",
+    description="Self-hosted AI code reviewer — GitHub & GitLab",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -66,11 +74,34 @@ async def health() -> HealthResponse:
     settings = get_settings()
     return HealthResponse(
         status="ok",
+        version="0.2.0",
         llm_configured=settings.has_llm_provider(),
         github_configured=bool(settings.github_token),
         gitlab_configured=bool(settings.gitlab_token),
         warnings=settings.validate_startup(),
     )
+
+
+@app.get("/api/stats", response_model=DashboardStats)
+async def dashboard_stats() -> DashboardStats:
+    return await store.get_dashboard_stats()
+
+
+@app.post("/api/feedback", response_model=FeedbackRecord)
+async def submit_feedback(body: FeedbackCreate) -> FeedbackRecord:
+    job = await store.get_job(body.job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    issues = await store.get_issues(body.job_id)
+    if not any(i.id == body.issue_id for i in issues):
+        raise HTTPException(status_code=404, detail="Issue not found for this job")
+    return await feedback_collector.submit(body)
+
+
+@app.get("/api/feedback")
+async def list_feedback(job_id: str | None = None, limit: int = 50):
+    records = await store.list_feedback(job_id=job_id, limit=limit)
+    return {"feedback": records}
 
 
 @app.post("/webhook/github", response_model=WebhookResponse)
@@ -92,7 +123,6 @@ async def manual_review(
     body: ManualReviewRequest,
     background_tasks: BackgroundTasks,
 ) -> WebhookResponse:
-    """Trigger a review manually (useful for testing without webhooks)."""
     job = await store.create_job(
         platform=body.platform,
         owner=body.owner,
@@ -116,13 +146,26 @@ async def get_review(job_id: str) -> JobDetailResponse:
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     issues = await store.get_issues(job_id)
-    return JobDetailResponse(job=job, issues=issues)
+    feedback = await store.list_feedback(job_id=job_id, limit=100)
+    return JobDetailResponse(job=job, issues=issues, feedback=feedback)
 
 
 @app.get("/api/reviews")
 async def list_reviews(limit: int = 20):
     jobs = await store.list_recent_jobs(limit=limit)
     return {"jobs": jobs}
+
+
+if FRONTEND_DIST.exists():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/")
+    async def serve_dashboard():
+        return FileResponse(FRONTEND_DIST / "index.html")
+
+    @app.get("/jobs/{job_id}")
+    async def serve_job_page(job_id: str):
+        return FileResponse(FRONTEND_DIST / "index.html")
 
 
 if __name__ == "__main__":

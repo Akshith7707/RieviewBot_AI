@@ -2,12 +2,14 @@
 
 Self-hosted AI code reviewer for **GitHub** and **GitLab**. Security rules run before the LLM. Learns from feedback (roadmap).
 
-## Features (MVP)
+## Features
 
 - Automatic PR/MR reviews via webhooks
 - OWASP-style security pre-scan (no API cost)
 - LLM review with fallback: Groq → Together → HuggingFace → Ollama
 - Inline comments + summary on the PR
+- **React dashboard** — live stats, job detail, issue viewer
+- **RL feedback loop** — 👍/👎 per finding (trains future reviews)
 - SQLite storage + REST API for job status
 - Manual trigger: `POST /api/review`
 
@@ -28,6 +30,12 @@ Self-hosted AI code reviewer for **GitHub** and **GitLab**. Security rules run b
    ```
    Or Linux/macOS: `./scripts/run_server.sh`
 
+3b. **Run dashboard** (second terminal):
+   ```powershell
+   .\scripts\run_dashboard.ps1
+   ```
+   Open http://localhost:5173 — see every review, rate findings, beat Copilot visibility.
+
 4. **Expose locally** (for webhooks):
    ```bash
    ngrok http 8000
@@ -46,6 +54,9 @@ Full guides: **[PROJECT_ROADMAP.md](PROJECT_ROADMAP.md)**
 | POST | `/webhook/gitlab` | GitLab MR events |
 | POST | `/api/review` | Trigger review manually |
 | GET | `/api/reviews/{job_id}` | Job status + issues |
+| GET | `/api/stats` | Dashboard metrics |
+| POST | `/api/feedback` | 👍/👎 RL feedback |
+| GET | `/api/feedback` | Feedback history |
 | GET | `/docs` | OpenAPI (Swagger) UI |
 
 ## Environment variables

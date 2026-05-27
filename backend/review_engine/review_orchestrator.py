@@ -48,7 +48,7 @@ def get_git_client(platform: Platform) -> GitProvider:
     raise ValueError(f"Unsupported platform: {platform}")
 
 
-def format_issue_comment(issue: ReviewIssue) -> str:
+def format_issue_comment(issue: ReviewIssue, job_id: str = "", dashboard_url: str = "") -> str:
     emoji = SEVERITY_EMOJI.get(issue.severity, "📝")
     body = (
         f"{emoji} **{issue.category.value}** — {issue.title}\n\n"
@@ -57,6 +57,11 @@ def format_issue_comment(issue: ReviewIssue) -> str:
     if issue.suggestion:
         body += f"\n💡 **Suggestion:**\n```\n{issue.suggestion}\n```\n"
     body += f"\n*Confidence: {issue.confidence:.0%} | Source: {issue.source}*"
+    if issue.id and dashboard_url:
+        body += (
+            f"\n\n👍 Rate this finding: {dashboard_url}/jobs/{job_id}"
+            f"?issue={issue.id}"
+        )
     return body
 
 
@@ -142,16 +147,22 @@ class ReviewOrchestrator:
             deduped = self._dedupe_issues(all_issues)
             capped = self._cap_issues(deduped)
 
+            await self.store.save_issues(job_id, capped)
+            saved_issues = await self.store.get_issues(job_id)
+            dashboard_url = self.settings.dashboard_url.rstrip("/")
+
             review_summary = self._build_summary(
-                job, capped, summaries, positives
+                job, saved_issues, summaries, positives, job_id, dashboard_url
             )
             inline_comments = [
                 {
                     "path": issue.file_path,
                     "line": issue.line_number,
-                    "body": format_issue_comment(issue),
+                    "body": format_issue_comment(
+                        issue, job_id, dashboard_url
+                    ),
                 }
-                for issue in capped
+                for issue in saved_issues
             ]
 
             await client.post_review(
@@ -162,20 +173,18 @@ class ReviewOrchestrator:
                 review_summary,
                 inline_comments,
             )
-
-            await self.store.save_issues(job_id, capped)
             await self.store.update_job_status(
                 job_id,
                 JobStatus.COMPLETED,
                 review_summary=review_summary,
-                issues_count=len(capped),
+                issues_count=len(saved_issues),
             )
             logger.info(
                 "Review completed for %s/%s#%s — %d issues",
                 job.owner,
                 job.repo,
                 job.pr_number,
-                len(capped),
+                len(saved_issues),
             )
 
         except Exception as exc:
@@ -221,6 +230,8 @@ class ReviewOrchestrator:
         issues: list[ReviewIssue],
         summaries: list[str],
         positives: list[str],
+        job_id: str = "",
+        dashboard_url: str = "",
     ) -> str:
         counts: dict[str, int] = defaultdict(int)
         for issue in issues:
@@ -260,11 +271,19 @@ class ReviewOrchestrator:
             for p in positives[:5]:
                 lines.append(f"- {p}")
 
+        if dashboard_url and job_id:
+            lines.extend(
+                [
+                    "",
+                    f"📊 **Live dashboard:** {dashboard_url}/jobs/{job_id}",
+                    "Rate findings with 👍/👎 — ReviewBot learns from your feedback (RL).",
+                ]
+            )
         lines.extend(
             [
                 "",
                 "---",
-                "*Powered by [ReviewBot AI](https://github.com) — self-hosted code reviewer*",
+                "*ReviewBot AI — OWASP pre-scan + LLM + RL feedback (beats black-box reviewers)*",
             ]
         )
         return "\n".join(lines)
