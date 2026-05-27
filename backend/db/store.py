@@ -10,6 +10,10 @@ import aiosqlite
 
 from backend.config import get_settings
 from backend.models import (
+    DashboardStats,
+    FeedbackCreate,
+    FeedbackRating,
+    FeedbackRecord,
     IssueCategory,
     JobStatus,
     Platform,
@@ -67,8 +71,22 @@ class ReviewStore:
                     FOREIGN KEY (job_id) REFERENCES review_jobs(id)
                 );
 
+                CREATE TABLE IF NOT EXISTS review_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    issue_id INTEGER NOT NULL,
+                    rating TEXT NOT NULL,
+                    user_name TEXT,
+                    comment TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (job_id) REFERENCES review_jobs(id),
+                    FOREIGN KEY (issue_id) REFERENCES review_issues(id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_jobs_status ON review_jobs(status);
                 CREATE INDEX IF NOT EXISTS idx_issues_job ON review_issues(job_id);
+                CREATE INDEX IF NOT EXISTS idx_feedback_job ON review_feedback(job_id);
+                CREATE INDEX IF NOT EXISTS idx_feedback_issue ON review_feedback(issue_id);
                 """
             )
             await db.commit()
@@ -223,6 +241,7 @@ class ReviewStore:
 
     def _row_to_issue(self, row: aiosqlite.Row) -> ReviewIssue:
         return ReviewIssue(
+            id=row["id"],
             severity=Severity(row["severity"]),
             category=IssueCategory(row["category"]),
             file_path=row["file_path"],
@@ -243,3 +262,137 @@ class ReviewStore:
             ) as cursor:
                 rows = await cursor.fetchall()
         return [self._row_to_job(r) for r in rows]
+
+    async def save_feedback(self, data: FeedbackCreate) -> FeedbackRecord:
+        now = _utcnow().isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                """
+                INSERT INTO review_feedback
+                (job_id, issue_id, rating, user_name, comment, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    data.job_id,
+                    data.issue_id,
+                    data.rating.value,
+                    data.user,
+                    data.comment,
+                    now,
+                ),
+            )
+            await db.commit()
+            feedback_id = cursor.lastrowid
+        return FeedbackRecord(
+            id=feedback_id or 0,
+            job_id=data.job_id,
+            issue_id=data.issue_id,
+            rating=data.rating,
+            user=data.user,
+            comment=data.comment,
+            created_at=datetime.fromisoformat(now),
+        )
+
+    async def list_feedback(
+        self, job_id: str | None = None, limit: int = 50
+    ) -> list[FeedbackRecord]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            if job_id:
+                query = (
+                    "SELECT * FROM review_feedback WHERE job_id = ? "
+                    "ORDER BY created_at DESC LIMIT ?"
+                )
+                params: tuple = (job_id, limit)
+            else:
+                query = (
+                    "SELECT * FROM review_feedback ORDER BY created_at DESC LIMIT ?"
+                )
+                params = (limit,)
+            async with db.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+        return [self._row_to_feedback(r) for r in rows]
+
+    def _row_to_feedback(self, row: aiosqlite.Row) -> FeedbackRecord:
+        return FeedbackRecord(
+            id=row["id"],
+            job_id=row["job_id"],
+            issue_id=row["issue_id"],
+            rating=FeedbackRating(row["rating"]),
+            user=row["user_name"] or "",
+            comment=row["comment"] or "",
+            created_at=datetime.fromisoformat(row["created_at"]),
+        )
+
+    async def get_feedback_stats(self) -> dict[str, int]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT rating, COUNT(*) as c FROM review_feedback GROUP BY rating"
+            ) as cursor:
+                rows = await cursor.fetchall()
+        stats = {"total": 0, "helpful": 0, "not_helpful": 0}
+        for rating, count in rows:
+            stats["total"] += count
+            if rating == FeedbackRating.HELPFUL.value:
+                stats["helpful"] = count
+            else:
+                stats["not_helpful"] = count
+        return stats
+
+    async def get_issue_feedback_stats(self, issue_id: int) -> dict[str, int]:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute(
+                "SELECT rating, COUNT(*) FROM review_feedback "
+                "WHERE issue_id = ? GROUP BY rating",
+                (issue_id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+        stats = {"total": 0, "helpful": 0, "not_helpful": 0}
+        for rating, count in rows:
+            stats["total"] += count
+            if rating == FeedbackRating.HELPFUL.value:
+                stats["helpful"] = count
+            else:
+                stats["not_helpful"] = count
+        return stats
+
+    async def get_dashboard_stats(self) -> DashboardStats:
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("SELECT COUNT(*) FROM review_jobs") as c:
+                total_jobs = (await c.fetchone())[0]
+            async with db.execute(
+                "SELECT COUNT(*) FROM review_jobs WHERE status = 'completed'"
+            ) as c:
+                completed = (await c.fetchone())[0]
+            async with db.execute(
+                "SELECT COUNT(*) FROM review_jobs WHERE status = 'failed'"
+            ) as c:
+                failed = (await c.fetchone())[0]
+            async with db.execute("SELECT COUNT(*) FROM review_issues") as c:
+                total_issues = (await c.fetchone())[0]
+            async with db.execute(
+                "SELECT severity, COUNT(*) FROM review_issues GROUP BY severity"
+            ) as c:
+                sev_rows = await c.fetchall()
+            async with db.execute(
+                "SELECT source, COUNT(*) FROM review_issues GROUP BY source"
+            ) as c:
+                src_rows = await c.fetchall()
+
+        fb = await self.get_feedback_stats()
+        helpful_pct = (
+            (fb["helpful"] / fb["total"] * 100) if fb["total"] > 0 else 0.0
+        )
+        return DashboardStats(
+            total_jobs=total_jobs,
+            completed_jobs=completed,
+            failed_jobs=failed,
+            total_issues=total_issues,
+            issues_by_severity={s: n for s, n in sev_rows},
+            issues_by_source={s or "unknown": n for s, n in src_rows},
+            feedback_total=fb["total"],
+            feedback_helpful=fb["helpful"],
+            feedback_not_helpful=fb["not_helpful"],
+            helpfulness_percent=round(helpful_pct, 1),
+            rl_training_ready=fb["total"] >= 50,
+        )

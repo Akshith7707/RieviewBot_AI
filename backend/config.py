@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     log_level: str = "INFO"
+    dashboard_url: str = "http://localhost:5173"
 
     # Optional (post-MVP)
     redis_url: str = ""

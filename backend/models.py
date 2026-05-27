@@ -36,6 +36,7 @@ class IssueCategory(str, Enum):
 
 
 class ReviewIssue(BaseModel):
+    id: int | None = None
     severity: Severity
     category: IssueCategory
     file_path: str
@@ -45,6 +46,43 @@ class ReviewIssue(BaseModel):
     suggestion: str = ""
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
     source: Literal["security_scanner", "llm"] = "llm"
+
+
+class FeedbackRating(str, Enum):
+    HELPFUL = "helpful"
+    NOT_HELPFUL = "not_helpful"
+
+
+class FeedbackCreate(BaseModel):
+    job_id: str
+    issue_id: int
+    rating: FeedbackRating
+    user: str = ""
+    comment: str = ""
+
+
+class FeedbackRecord(BaseModel):
+    id: int
+    job_id: str
+    issue_id: int
+    rating: FeedbackRating
+    user: str = ""
+    comment: str = ""
+    created_at: datetime
+
+
+class DashboardStats(BaseModel):
+    total_jobs: int = 0
+    completed_jobs: int = 0
+    failed_jobs: int = 0
+    total_issues: int = 0
+    issues_by_severity: dict[str, int] = Field(default_factory=dict)
+    issues_by_source: dict[str, int] = Field(default_factory=dict)
+    feedback_total: int = 0
+    feedback_helpful: int = 0
+    feedback_not_helpful: int = 0
+    helpfulness_percent: float = 0.0
+    rl_training_ready: bool = False
 
 
 class DiffChange(BaseModel):
@@ -136,6 +174,7 @@ class WebhookResponse(BaseModel):
 class JobDetailResponse(BaseModel):
     job: ReviewJob
     issues: list[ReviewIssue] = Field(default_factory=list)
+    feedback: list[FeedbackRecord] = Field(default_factory=list)
 
 
 class PRContext(BaseModel):
